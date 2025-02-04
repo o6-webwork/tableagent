@@ -14,7 +14,7 @@ from langchain_community.utilities import SQLDatabase
 
 # For semantic retrieval (using a local embedding model)
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.docstore.document import Document
 
 ######################################
