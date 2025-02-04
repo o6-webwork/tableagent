@@ -21,7 +21,7 @@ from langchain.docstore.document import Document
 # 1. GENERALIZED FILE INPUT & DATA LOAD
 ######################################
 
-st.title("Generalized Chatbot: SQL + Semantic Retrieval")
+st.title("TableRAG: SQL + Semantic Search for Tabular Data")
 st.markdown(
     """
     Upload a CSV, XLSX, or JSON file. The app will ingest the data, build a database, and allow you to ask questions.
