@@ -91,9 +91,9 @@ top_n = st.sidebar.number_input("Top N (SQL and semantic retrieval)", min_value=
 # Initialize your local LLM (chat model) instance.
 # Be sure to replace the API key and model path as needed.
 llm = ChatOpenAI(
-    base_url="",
-    api_key=os.environ.get("OPENAI_API_KEY", "token-abc123"),
-    model=r"",
+    base_url="http://127.0.0.1:1234/v1",
+    api_key=os.environ.get("OPENAI_API_KEY", "lm-studio"),
+    model=r"qwen2.5-7b-instruct",
 )
 
 # Define the prompt template for generating SQL queries.
