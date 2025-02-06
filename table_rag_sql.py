@@ -193,7 +193,7 @@ def execute_sql_query(state: dict) -> dict:
 # 6. STREAMLIT USER INTERFACE FOR QA
 ######################################
 
-st.markdown("### Ask a question about your data (SQL retrieval only):")
+st.markdown("### Ask a question about your data:")
 user_question = st.text_input("Your question:")
 
 if st.button("Submit") and user_question:
