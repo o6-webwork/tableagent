@@ -30,6 +30,12 @@ st.markdown(
     Upload a CSV, XLSX, or JSON file. The app will ingest the data, build a database, and allow you to ask SQL-based questions.
     """
 )
+# Sidebar inputs for configuring the LLM
+st.sidebar.header("LLM Configuration")
+base_url = st.sidebar.text_input("Base URL", "http://127.0.0.1:1234/v1")
+api_key = st.sidebar.text_input("API Key", os.environ.get("OPENAI_API_KEY", "lm-studio"))
+model = st.sidebar.text_input("Model", "qwen2.5-coder-7b-instruct")
+temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.0, 0.05)
 
 uploaded_file = st.file_uploader("Upload a file", type=["csv", "xlsx", "json"])
 if uploaded_file is not None:
@@ -103,10 +109,10 @@ extra_columns = st.sidebar.multiselect(
 ######################################
 
 llm = ChatOpenAI(
-    base_url="http://127.0.0.1:1234/v1",
-    api_key=os.environ.get("OPENAI_API_KEY", "lm-studio"),
-    model=r"qwen2.5-coder-7b-instruct",
-    temperature=0.0,
+    base_url=base_url,
+    api_key=api_key,
+    model=model,
+    temperature=temperature,
 )
 
 # Updated prompt template now includes extra_columns as part of the instructions.
