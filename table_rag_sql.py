@@ -44,6 +44,18 @@ if uploaded_file is not None:
         else:
             st.error("Unsupported file type.")
             st.stop()
+
+        # Replace spaces in column names with underscores
+        df.columns = [col.replace(" ", "_") for col in df.columns]
+        
+        #st.success("File uploaded and processed successfully!")
+        #st.write(df.head())
+        
+        # Check for duplicate column names
+        if df.columns.duplicated().any():
+            st.error("Duplicate column names detected after processing. Please check the file.")
+            st.stop()
+
     except Exception as e:
         st.error(f"Error loading file: {e}")
         st.stop()
