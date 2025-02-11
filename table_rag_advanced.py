@@ -89,6 +89,13 @@ llm = ChatOpenAI(
 
 uploaded_file = st.file_uploader("Upload a file", type=["csv", "xlsx", "json"])
 if uploaded_file is not None:
+    # If this is a new file (different filename), clear cached keys
+    if "uploaded_file_name" not in st.session_state or st.session_state["uploaded_file_name"] != uploaded_file.name:
+        keys_to_clear = ["df", "table_name", "sample_data", "data_dictionary", "generated_query"]
+        for key in keys_to_clear:
+            st.session_state.pop(key, None)
+        st.session_state["uploaded_file_name"] = uploaded_file.name
+    # Continue processing the file...
     file_name = uploaded_file.name.lower()
     try:
         if file_name.endswith(".csv"):
