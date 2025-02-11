@@ -5,6 +5,8 @@ import json
 import uuid
 import time
 import io  # For Excel download conversion
+import random  # For random sampling
+import numpy as np  # For handling numpy.bool_
 from sqlalchemy import create_engine, text
 
 # Import LLM and prompt classes
@@ -60,9 +62,8 @@ st.markdown(
 )
 
 ######################################
-# Sidebar: LLM Configuration, Query Explainability & Data Dictionary Toggle
+# Sidebar Options
 ######################################
-
 st.sidebar.header("LLM Configuration")
 base_url = st.sidebar.text_input("Base URL", "http://127.0.0.1:1235/v1")
 api_key = st.sidebar.text_input("API Key", os.environ.get("OPENAI_API_KEY", "token-abc123"))
@@ -70,11 +71,14 @@ model = st.sidebar.text_input("Model", "Qwen2.5-7b-Instruct")
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.0, 0.05)
 
 st.sidebar.header("Explainability Options")
-show_sql_debug = st.sidebar.checkbox("Show SQL Query for debugging", value=False)
+show_sql_debug = st.sidebar.checkbox("Show SQL Query", value=False)
 query_explainability_toggle = st.sidebar.checkbox("Generate Query Explanation", value=False)
 
 st.sidebar.header("Data Dictionary")
 data_dictionary_toggle = st.sidebar.checkbox("Generate and use Data Dictionary", value=False)
+
+# st.sidebar.header("Debug Options")
+# show_prompt_toggle = st.sidebar.checkbox("Show SQL Generation Prompt", value=False)
 
 llm = ChatOpenAI(
     base_url=base_url,
@@ -135,9 +139,49 @@ if "ro_engine" not in st.session_state:
 else:
     ro_engine = st.session_state["ro_engine"]
 
+# Get table schema from SQL DB using PRAGMA
+with ro_engine.connect() as conn:
+    result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+    table_schema = [dict(row._mapping) for row in result]
+
 db_for_schema = SQLDatabase(engine=full_engine, sample_rows_in_table_info=5)
-schema_info = db_for_schema.get_table_info()
+schema_info = db_for_schema.get_table_info()  # We still keep this for legacy purposes if needed.
 db = SQLDatabase(engine=ro_engine)
+
+######################################
+# Helper Function: Generate Combined Schema JSON for multiple tables
+######################################
+def generate_combined_schema(table_schema, data_dictionary, sample_data, df, table_name):
+    columns = []
+    for col_info in table_schema:
+        col_name = col_info["name"]
+        data_type = col_info["type"]
+        col_description = data_dictionary.get(col_name, "") if data_dictionary else ""
+        sample_values = []
+        if sample_data:
+            for row in sample_data:
+                if col_name in row and row[col_name] is not None:
+                    sample_values.append(str(row[col_name]))
+            sample_values = list(dict.fromkeys(sample_values))
+            if len(sample_values) > 3:
+                sample_values = random.sample(sample_values, 3)
+        has_null = bool(df[col_name].isnull().any())
+        columns.append({
+            "column_name": col_name,
+            "data_type": data_type,
+            "column_description": col_description,
+            "sample_data": sample_values,
+            "has_null": has_null
+        })
+    combined = {
+        "tables": [
+            {
+                "table_name": table_name,
+                "columns": columns
+            }
+        ]
+    }
+    return json.dumps(combined, indent=2, default=lambda o: bool(o) if isinstance(o, np.bool_) else str(o))
 
 ######################################
 # 3. DATA DICTIONARY: GENERATE AND EDIT (with Sample Data refresh)
@@ -166,7 +210,7 @@ if data_dictionary_toggle:
     if "data_dictionary" not in st.session_state:
         with st.spinner("Generating data dictionary..."):
             data_dict_prompt = '''
-You are an expert data analyst. Given the schema information and a sample of the data, generate a short description for what each column represents.
+You are an expert data analyst. Given the following schema information and sample data, generate a short description for what each column represents.
 
 Schema info:
 {schema_info}
@@ -184,7 +228,7 @@ Output the result as JSON with a single field "explanations", which is an object
             def generate_data_dictionary() -> dict:
                 sample_data = json.dumps(st.session_state["sample_data"], indent=2)
                 prompt = data_dict_prompt_template.invoke({
-                    "schema_info": schema_info,
+                    "schema_info": json.dumps(table_schema, indent=2),
                     "sample_data": sample_data
                 })
                 structured_llm = llm.with_structured_output(DataDictionaryOutput)
@@ -211,7 +255,6 @@ Output the result as JSON with a single field "explanations", which is an object
 ######################################
 # 4. USER CONTROLS (Extra Columns)
 ######################################
-
 extra_columns = st.sidebar.multiselect(
     "Always display these columns (if applicable)", 
     options=df.columns.tolist(), 
@@ -221,35 +264,34 @@ extra_columns = st.sidebar.multiselect(
 ######################################
 # 5. INITIALIZE PROMPT TEMPLATES FOR SQL & QUERY EXPLANATION
 ######################################
-
 prompt_template_text = '''
-    You are a top tier data analysis algorithm that strives to understand the customer's needs and provide the most relevant data.
+You are a top tier data analysis algorithm that strives to understand the customer's needs and provide the most relevant data.
 
-    Given the customer's input question, generate a syntactically correct {dialect} SQL query that retrieves only the necessary columns to answer the question. The query must include, in its SELECT clause, every column that appears in its WHERE clause. Do not include a LIMIT clause in the query. You may order the results by a relevant column to highlight the most interesting examples.
+Given the customer's input question, generate a syntactically correct {dialect} SQL query that retrieves only the necessary columns to answer the question. The query must include, in its SELECT clause, every column that appears in its WHERE clause. Do not include a LIMIT clause in the query. You may order the results by a relevant column to highlight the most interesting examples.
 
-    The output must be formatted as JSON with a single field "query". For example:
+The output must be formatted as JSON with a single field "query". For example:
 
-    {{
-      "query": "SELECT COUNT(*) FROM Database;"
-    }}
+{{
+  "query": "SELECT COUNT(*) FROM Database;"
+}}
 
-    Pay careful attention to use **only** the column names that you can see in the **schema_info**. Be careful to not query for columns that do not exist. Also, pay attention to which column is in which table.
+Use the following combined schema information (in JSON format) to ensure you reference only columns that exist. The JSON is structured as follows:
+- It has a "tables" field which is an array.
+- Each element represents a table with:
+   - "table_name": the table's name,
+   - "columns": an array of objects, each with:
+       - "column_name": the name of the column,
+       - "data_type": the column's data type,
+       - "column_description": a description of what the column represents,
+       - "sample_data": a list of up to 3 example values,
+       - "has_null": a boolean indicating if null values are present.
 
-    <schema_info>
-    {table_info}
-    </schema_info>
+<combined_schema_info>
+{combined_schema_info}
+</combined_schema_info>
 
-    **Extra Instruction:** If applicable (i.e. if the query is not an aggregation query), always include the following extra_columns in the SELECT clause: 
-
-    <extra_columns>
-    {extra_columns}
-    </extra_columns>.
-
-    {data_description_prompt}
-
-    Question: {input}
-
-    '''
+Question: {input}
+'''
 query_prompt_template = ChatPromptTemplate.from_template(prompt_template_text)
 
 class QueryOutput(TypedDict):
@@ -274,22 +316,23 @@ class QueryExplanationOutput(TypedDict):
 ######################################
 # 6. SQL CHAIN FUNCTIONS
 ######################################
-
 def generate_sql_query(question: str) -> dict:
-    if data_dictionary_toggle and "data_dictionary" in st.session_state:
-        data_description_lines = [f"{col}: {desc}" for col, desc in st.session_state["data_dictionary"].items()]
-        data_description_prompt = ("Additional information on what each column represents has been provided "
-                                   "to aid in answering the customer's question:\n" + "\n".join(data_description_lines))
-    else:
-        data_description_prompt = ""
-        
+    combined_schema_info = generate_combined_schema(
+        table_schema,
+        st.session_state.get("data_dictionary", {}),
+        st.session_state.get("sample_data", []),
+        df,
+        st.session_state.get("table_name", "training")
+    )
     prompt = query_prompt_template.invoke({
         "dialect": db.dialect,
-        "table_info": schema_info,
+        "combined_schema_info": combined_schema_info,
         "input": question,
-        "extra_columns": ", ".join(extra_columns) if extra_columns else "None",
-        "data_description_prompt": data_description_prompt
+        "extra_columns": ", ".join(extra_columns) if extra_columns else "None"
     })
+    # if show_prompt_toggle:
+    #     st.markdown("### Debug: SQL Generation Prompt")
+    #     st.code(prompt, language="text")
     structured_llm = llm.with_structured_output(QueryOutput)
     with st.spinner("Generating SQL query..."):
         result = structured_llm.invoke(prompt)
@@ -322,7 +365,6 @@ def execute_sql_query(state: dict) -> dict:
 ######################################
 # 7. DOWNLOAD RESULTS FUNCTION
 ######################################
-
 def download_results(df_result: pd.DataFrame):
     csv_bytes = df_result.to_csv(index=False).encode('utf-8')
     json_str = df_result.to_json(orient='records', indent=2)
@@ -354,7 +396,6 @@ def download_results(df_result: pd.DataFrame):
 ######################################
 # 8. STREAMLIT USER INTERFACE FOR QA
 ######################################
-
 st.markdown("### Ask a question about your data:")
 user_question = st.text_input("Your question:")
 
