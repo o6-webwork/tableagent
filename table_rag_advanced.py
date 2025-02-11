@@ -77,8 +77,8 @@ query_explainability_toggle = st.sidebar.checkbox("Generate Query Explanation", 
 st.sidebar.header("Data Dictionary")
 data_dictionary_toggle = st.sidebar.checkbox("Generate and use Data Dictionary", value=False)
 
-# st.sidebar.header("Debug Options")
-# show_prompt_toggle = st.sidebar.checkbox("Show SQL Generation Prompt", value=False)
+st.sidebar.header("Debug Options")
+show_prompt_toggle = st.sidebar.checkbox("Show SQL Generation Prompt", value=False)
 
 llm = ChatOpenAI(
     base_url=base_url,
@@ -282,7 +282,7 @@ Use the following combined schema information (in JSON format) to ensure you ref
    - "columns": an array of objects, each with:
        - "column_name": the name of the column,
        - "data_type": the column's data type,
-       - "column_description": a description of what the column represents,
+       - "column_description": a description of what the column represents; pay careful attention to this description when selecting columns,
        - "sample_data": a list of up to 3 example values,
        - "has_null": a boolean indicating if null values are present.
 
@@ -338,9 +338,9 @@ def generate_sql_query(question: str) -> dict:
         "input": question,
         "extra_columns": ", ".join(extra_columns) if extra_columns else "None"
     })
-    # if show_prompt_toggle:
-    #     st.markdown("### Debug: SQL Generation Prompt")
-    #     st.code(prompt, language="text")
+    if show_prompt_toggle:
+         st.markdown("### Debug: SQL Generation Prompt")
+         st.code(prompt, language="text")
     structured_llm = llm.with_structured_output(QueryOutput)
     with st.spinner("Generating SQL query..."):
         result = structured_llm.invoke(prompt)
