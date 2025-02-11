@@ -57,88 +57,58 @@ git clone https://github.com/yourusername/your-repo.git
 cd your-repo
 ```
 
-### 2. Create a Virtual Environment (optional but recommended)
+### 2. Run with Docker (Recommended)
+To avoid dependency conflicts, you can run TableAgent inside a Docker container.
+
+#### **Building the Docker Image**
+```sh
+docker build -t tableagent .
+```
+
+#### **Running the Container**
+```sh
+docker run --rm -p 8501:8501 tableagent
+```
+- `--rm` removes the container automatically after it stops, keeping things clean.
+- `-p 8501:8501` maps the container's port to the host, making the Streamlit app accessible at `http://localhost:8501`.
+
+### **Accessing the App on a Local Network (LAN)**
+If you want to access the app from another device on the same network:
+1. Find your host machine's local IP address:
+   - **Mac/Linux:** `ip a | grep inet`
+   - **Windows:** `ipconfig`
+   - Look for an IP address like `192.168.x.x` or `10.x.x.x`.
+2. On another device connected to the same network, open a browser and visit:
+   ```
+   http://<HOST_IP>:8501
+   ```
+   Example:
+   ```
+   http://192.168.1.100:8501
+   ```
+
+#### **Stopping the Container**
+Press `Ctrl+C` in the terminal running the container, or stop it using:
+```sh
+docker ps  # Find the container ID
+docker stop <container_id>
+```
+
+### 3. Manual Installation (Without Docker)
+If you prefer running locally, follow these steps:
+
+#### **Create a Virtual Environment**
 ```sh
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-### 3. Install the Required Packages
-Either create a `requirements.txt` with the dependencies or install them individually:
+#### **Install Dependencies**
 ```sh
-pip install streamlit pandas sqlalchemy langchain streamlit-aggrid numpy
-```
-**Note:** You may need to install additional packages depending on your LLM server configuration.
-
-### 4. Set Up Environment Variables
-Set your API key and other credentials (if needed). For example:
-```sh
-export OPENAI_API_KEY=your_actual_api_key_here
+pip install -r requirements.txt
 ```
 
-## Usage
-
-### 1. Run the Streamlit App
+#### **Run the App**
 ```sh
 streamlit run table_rag.py
 ```
-
-### 2. Upload Your Data
-- On the main page, use the file uploader to select a CSV, XLSX, or JSON file.
-- The data is ingested, and a SQLite database is built.
-- **Note:** If you upload a new file, the app automatically clears previously cached data (including the DataFrame, table name, sample data, and data dictionary).
-
-### 3. Manage the Data Dictionary
-- If enabled, the app will generate a data dictionary (using the table schema from the SQL database and sample data).
-- You can edit the data dictionary using the provided interface and then save it.
-- The data dictionary is merged with the table schema to form a combined JSON schema for the LLM prompt.
-
-### 4. Ask Questions
-- Enter a natural language question in the text input.
-- The LLM generates a SQL query based on the combined schema and the question.
-- The query is executed against the SQLite database, and the results are displayed using `st-aggrid`.
-- If enabled, a query explanation is also generated and displayed in an expander.
-- A debug toggle allows you to view the full SQL generation prompt.
-
-### 5. Download Results
-- Download buttons are available to export the query results in CSV, Excel, or JSON formats.
-
-## Configuration
-
-### LLM Settings
-Adjust the parameters of the `ChatOpenAI` instance in the code (`base_url`, `api_key`, `model`, `temperature`) to match your local LLM server.
-
-### SQL Database
-- The database is created dynamically with a unique session ID.
-- The table name is derived from the uploaded file name.
-- The combined schema JSON is built by merging:
-  - The table schema (from SQLite PRAGMA),
-  - The optional data dictionary,
-  - Sample data extracted from the table.
-
-### Debug Options
-- Toggle **Show SQL Query** and **Generate Query Explanation** on the sidebar.
-- **Show SQL Generation Prompt (Debug Options)** displays the prompt text sent to the LLM.
-
-## Future Enhancements
-
-### Multi-Table Support
-- The combined schema JSON is structured with a `tables` array to allow for future support of multiple tables and relationships.
-
-### Advanced Metadata Management
-- Although SQLite does not natively support column comments, you could integrate a custom metadata table for CRUD operations on column descriptions.
-
-### Enhanced Query Validation
-- Further post-processing and SQL parsing could be implemented to enforce constraints (e.g., ensuring only `SELECT` statements and case-insensitive comparisons).
-
-## Contributing
-
-Contributions and improvements are welcome! Please submit issues or pull requests to help enhance functionality, fix bugs, or improve documentation.
-
-## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
-
-## Acknowledgements
-
-Special thanks to the developers of Streamlit, LangChain, and the HuggingFace community for providing the robust tools and libraries that power TableAgent.

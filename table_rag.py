@@ -65,7 +65,7 @@ st.markdown(
 # Sidebar Options
 ######################################
 st.sidebar.header("LLM Configuration")
-base_url = st.sidebar.text_input("Base URL", "http://127.0.0.1:1235/v1")
+base_url = st.sidebar.text_input("Base URL", "http://127.0.0.1:1234/v1")
 api_key = st.sidebar.text_input("API Key", os.environ.get("OPENAI_API_KEY", "token-abc123"))
 model = st.sidebar.text_input("Model", "Qwen2.5-7b-Instruct")
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.0, 0.05)
@@ -274,7 +274,7 @@ extra_columns = st.sidebar.multiselect(
 prompt_template_text = '''
 You are a top tier data analysis algorithm that strives to understand the customer's needs and provide the most relevant data.
 
-Given the customer's input question, generate a syntactically correct {dialect} SQL query that retrieves only the necessary columns to answer the question. The query must include, in its SELECT clause, every column that appears in its WHERE clause. Do not include a LIMIT clause in the query. You may order the results by a relevant column to highlight the most interesting examples.
+Given the customer's input question, generate a syntactically correct {dialect} SQL query that retrieves only the necessary columns to answer the question. Do NOT include a LIMIT clause in your query.
 
 The output must be formatted as JSON with a single field "query". For example:
 
@@ -282,7 +282,7 @@ The output must be formatted as JSON with a single field "query". For example:
   "query": "SELECT COUNT(*) FROM Database;"
 }}
 
-Use the following combined schema information (in JSON format) to ensure you reference only columns that exist. The JSON is structured as follows:
+Mistakes are very costly, so use the following combined schema information (in JSON format) to ensure you reference only columns that exist. The JSON is structured as follows:
 - It has a "tables" field which is an array.
 - Each element represents a table with:
    - "table_name": the table's name,
@@ -305,7 +305,7 @@ Pay careful attention to include the following extra_columns in the SELECT claus
     
 <extra_columns> 
 {extra_columns} 
-</extra_columns>.
+</extra_columns>
 '''
 query_prompt_template = ChatPromptTemplate.from_template(prompt_template_text)
 
