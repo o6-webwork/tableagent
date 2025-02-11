@@ -1,105 +1,139 @@
-# TableRAG
+# TableAgent
 
-This project implements a dual-retrieval chatbot using Streamlit. The chatbot accepts CSV, XLSX, or JSON files as data sources, builds a SQLite database, and uses two retrieval methods to answer user queries:
-
-- **SQL-based retrieval:** Uses a language model (LLM) to generate SQL queries from natural language questions, executes them on a read-only database, and generates answers based on structured data.
-- **Semantic retrieval (RAG):** Uses local embeddings (via HuggingFace and FAISS) to perform a similarity search on the data and generate context-based answers.
-- **Combined Answering:** Depending on the question type (e.g., counting queries), the system prioritizes one method over the other. A slider allows you to adjust the weighting between the SQL and semantic answers.
-
-A debug toggle is also available to display the generated SQL query for troubleshooting purposes.
+TableAgent is a Streamlit-based application that ingests CSV, XLSX, or JSON files to build a SQLite database and leverages a local language model (LLM) to generate SQL queries from natural language questions. The generated queries are executed against the database, and the results—as well as a human-readable explanation of the query—are presented to the user. In addition, the app automatically constructs a combined JSON schema for the table (with details from the SQL metadata, sample data, and an optional data dictionary) that helps guide the LLM to generate accurate, case-insensitive SQL queries. The design is extensible to support multiple tables in the future.
 
 ## Features
 
-- **Generalized Data Ingestion:** Accepts CSV, XLSX, or JSON files.
-- **Dual Retrieval Approach:**
-  - **SQL Retrieval:** Generates and executes SQL queries based on the data schema.
-  - **Semantic Retrieval:** Uses embeddings to retrieve context and answer more open-ended questions.
-- **Answer Combination Logic:** Dynamically prioritizes the SQL result for count/numeric questions or blends both answers based on a configurable weight.
-- **Debug Mode:** Optionally display the generated SQL prompt and query for debugging.
-- **Local LLM & Embeddings:** Uses a local language model endpoint for chat completions and HuggingFace models for embedding generation.
+### Generalized Data Ingestion
+- Upload CSV, XLSX, or JSON files.
+- The data is ingested and stored in a dynamically named SQLite database.
+
+### Dynamic Schema Generation
+- Retrieves table metadata using SQLite’s PRAGMA commands.
+- Merges the table schema with a user-editable data dictionary and sample data.
+- Constructs a combined JSON schema with fields for each column:
+  - `column_name`
+  - `data_type`
+  - `column_description`
+  - `sample_data` (up to 3 randomly sampled example values)
+  - `has_null` (a boolean indicating whether null values are present)
+- The JSON is structured with a `tables` array to facilitate multi-table support in the future.
+
+### LLM-Based SQL Query Generation and Explanation
+- Uses a local LLM (via LangChain) to convert natural language questions into SQL queries.
+- Enforces constraints in the prompt so that the generated query:
+  - Only uses `SELECT` statements.
+  - References only column names from the combined JSON schema.
+  - Performs case-insensitive text comparisons.
+- Provides a query explanation in plain language.
+
+### Debug and Data Dictionary Editing
+- A debug toggle displays the SQL generation prompt.
+- A built-in CRUD interface allows you to view and edit the generated data dictionary (column metadata).
+
+### Result Display and Download
+- Executes generated SQL queries on a read-only SQLite connection.
+- Displays results using `st-aggrid`.
+- Provides options to download query results in CSV, Excel, or JSON format.
 
 ## Requirements
 
 - Python 3.8+
-- [Streamlit](https://streamlit.io/)
-- [Pandas](https://pandas.pydata.org/)
-- [SQLAlchemy](https://www.sqlalchemy.org/)
-- [LangChain](https://github.com/hwchase17/langchain) and community extensions
-- [HuggingFace Transformers and SentenceTransformers](https://huggingface.co/)
-- [FAISS](https://github.com/facebookresearch/faiss) (e.g., `faiss-cpu`)
+- Streamlit
+- Pandas
+- SQLAlchemy
+- LangChain (and community extensions)
+- HuggingFace Transformers (or any compatible local LLM server)
+- `st-aggrid`
+- Other standard libraries (random, numpy, etc.)
 
-Additional dependencies might be required by your local LLM server (e.g., Qwen2.5) and any custom packages from LangChain community.
+Additional dependencies might be required by your local LLM server.
 
 ## Installation
 
-### 1. Clone the Repository:
-
-```bash
+### 1. Clone the Repository
+```sh
 git clone https://github.com/yourusername/your-repo.git
 cd your-repo
 ```
 
-### 2. Create a Virtual Environment (optional but recommended):
-
-```bash
+### 2. Create a Virtual Environment (optional but recommended)
+```sh
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-### 3. Install the Required Packages:
-
-Create a `requirements.txt` file with the necessary dependencies or install packages individually:
-
-```bash
-pip install streamlit pandas sqlalchemy langchain faiss-cpu sentence-transformers
+### 3. Install the Required Packages
+Either create a `requirements.txt` with the dependencies or install them individually:
+```sh
+pip install streamlit pandas sqlalchemy langchain streamlit-aggrid numpy
 ```
+**Note:** You may need to install additional packages depending on your LLM server configuration.
 
-> **Note:** You may need to install additional packages depending on your specific environment or LLM configuration.
-
-### 4. Set Up Environment Variables:
-
-Set your API key for the LLM (and any other required credentials). For example, in your shell or within a `.env` file (using `python-dotenv`):
-
-```bash
+### 4. Set Up Environment Variables
+Set your API key and other credentials (if needed). For example:
+```sh
 export OPENAI_API_KEY=your_actual_api_key_here
 ```
 
 ## Usage
 
-### 1. Run the Streamlit App:
-
-```bash
+### 1. Run the Streamlit App
+```sh
 streamlit run table_rag.py
 ```
 
-### 2. Upload Your Data:
-
+### 2. Upload Your Data
 - On the main page, use the file uploader to select a CSV, XLSX, or JSON file.
 - The data is ingested, and a SQLite database is built.
+- **Note:** If you upload a new file, the app automatically clears previously cached data (including the DataFrame, table name, sample data, and data dictionary).
 
-### 3. Ask Questions:
+### 3. Manage the Data Dictionary
+- If enabled, the app will generate a data dictionary (using the table schema from the SQL database and sample data).
+- You can edit the data dictionary using the provided interface and then save it.
+- The data dictionary is merged with the table schema to form a combined JSON schema for the LLM prompt.
 
+### 4. Ask Questions
 - Enter a natural language question in the text input.
-- Adjust the **SQL Weight** slider to prioritize SQL-based or semantic retrieval.
-- Toggle the **debug** checkbox to see the generated SQL query (for debugging purposes).
-- Click **Submit** to see the answers generated via SQL, semantic retrieval, and the combined final answer.
+- The LLM generates a SQL query based on the combined schema and the question.
+- The query is executed against the SQLite database, and the results are displayed using `st-aggrid`.
+- If enabled, a query explanation is also generated and displayed in an expander.
+- A debug toggle allows you to view the full SQL generation prompt.
+
+### 5. Download Results
+- Download buttons are available to export the query results in CSV, Excel, or JSON formats.
 
 ## Configuration
 
-### LLM Settings:
-In `app.py`, adjust the `ChatOpenAI` instance parameters (`base_url`, `api_key`, `model`) to match your local LLM server configuration.
+### LLM Settings
+Adjust the parameters of the `ChatOpenAI` instance in the code (`base_url`, `api_key`, `model`, `temperature`) to match your local LLM server.
 
-This implementation currently uses an LLM served on **LM Studio's server mode**, but any **OpenAI-compatible endpoint** will work.
+### SQL Database
+- The database is created dynamically with a unique session ID.
+- The table name is derived from the uploaded file name.
+- The combined schema JSON is built by merging:
+  - The table schema (from SQLite PRAGMA),
+  - The optional data dictionary,
+  - Sample data extracted from the table.
 
-### Embedding Model:
-The code uses `sentence-transformers/all-MiniLM-L6-v2` via HuggingFace. You can replace this with any compatible model.
+### Debug Options
+- Toggle **Show SQL Query** and **Generate Query Explanation** on the sidebar.
+- **Show SQL Generation Prompt (Debug Options)** displays the prompt text sent to the LLM.
 
-### SQL Database:
-The database table is always named `training`. You can modify the code to support dynamic table naming if needed.
+## Future Enhancements
+
+### Multi-Table Support
+- The combined schema JSON is structured with a `tables` array to allow for future support of multiple tables and relationships.
+
+### Advanced Metadata Management
+- Although SQLite does not natively support column comments, you could integrate a custom metadata table for CRUD operations on column descriptions.
+
+### Enhanced Query Validation
+- Further post-processing and SQL parsing could be implemented to enforce constraints (e.g., ensuring only `SELECT` statements and case-insensitive comparisons).
 
 ## Contributing
 
-Contributions and improvements are welcome! Feel free to submit issues or pull requests to enhance functionality, fix bugs, or improve documentation.
+Contributions and improvements are welcome! Please submit issues or pull requests to help enhance functionality, fix bugs, or improve documentation.
 
 ## License
 
@@ -107,4 +141,4 @@ This project is licensed under the MIT License. See the `LICENSE` file for detai
 
 ## Acknowledgements
 
-Thanks to the developers of Streamlit, LangChain, and the HuggingFace community for providing amazing tools and libraries.
+Special thanks to the developers of Streamlit, LangChain, and the HuggingFace community for providing the robust tools and libraries that power TableAgent.
