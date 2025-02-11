@@ -289,8 +289,16 @@ Use the following combined schema information (in JSON format) to ensure you ref
 <combined_schema_info>
 {combined_schema_info}
 </combined_schema_info>
-
+    
 Question: {input}
+
+Ensure that any text comparisons in your query are case-insensitive. For example, use LOWER(column) = LOWER('value') or apply a COLLATE NOCASE clause when filtering.
+
+Pay careful attention to include the following extra_columns in the SELECT clause, unless the query involves an aggregate function (e.g. COUNT, MIN, MAX, AVG, SUM):
+    
+<extra_columns> 
+{extra_columns} 
+</extra_columns>.
 '''
 query_prompt_template = ChatPromptTemplate.from_template(prompt_template_text)
 
