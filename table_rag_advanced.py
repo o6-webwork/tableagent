@@ -188,8 +188,7 @@ Output the result as JSON with a single field "explanations", which is an object
                     "sample_data": sample_data
                 })
                 structured_llm = llm.with_structured_output(DataDictionaryOutput)
-                with st.spinner("Generating data dictionary..."):
-                    result = structured_llm.invoke(prompt)
+                result = structured_llm.invoke(prompt)
                 return result["explanations"]
 
             st.session_state["data_dictionary"] = generate_data_dictionary()
@@ -279,7 +278,8 @@ class QueryExplanationOutput(TypedDict):
 def generate_sql_query(question: str) -> dict:
     if data_dictionary_toggle and "data_dictionary" in st.session_state:
         data_description_lines = [f"{col}: {desc}" for col, desc in st.session_state["data_dictionary"].items()]
-        data_description_prompt = "Additional information on what each column represents has been provided to aid in answering the customer's question:\n" + "\n".join(data_description_lines)
+        data_description_prompt = ("Additional information on what each column represents has been provided "
+                                   "to aid in answering the customer's question:\n" + "\n".join(data_description_lines))
     else:
         data_description_prompt = ""
         
