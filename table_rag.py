@@ -8,6 +8,7 @@ import io  # For Excel download conversion
 import random  # For random sampling
 import numpy as np  # For handling numpy.bool_
 import re
+import requests
 from sqlalchemy import create_engine, text
 
 # Import LLM and prompt classes
@@ -72,10 +73,46 @@ st.markdown(
 ######################################
 # Sidebar Options
 ######################################
+@st.dialog("Error!")
+def error_popup(e):
+    st.write(f"{e}")
+    refresh_button = st.button("Got it!")
+    if refresh_button:
+        st.rerun()
+
 st.sidebar.header("LLM Configuration")
-base_url = st.sidebar.text_input("Base URL", "http://127.0.0.1:1234/v1")
-api_key = st.sidebar.text_input("API Key", os.environ.get("OPENAI_API_KEY", "token-abc123"))
-model = st.sidebar.text_input("Model", "Qwen2.5-7b-Instruct")
+openapiurl = st.sidebar.text_input("Base URL", "http://127.0.0.1:1234/v1")
+openapitoken = st.sidebar.text_input("API Key", os.environ.get("OPENAI_API_KEY", "token-abc123"))
+st.session_state.openapitoken = openapitoken
+st.session_state.openaiapiurl = openapiurl 
+
+load_models = st.sidebar.button("Load models" if 'model_list' not in st.session_state else "Refresh models")
+if load_models:
+    url = st.session_state.openaiapiurl + "/models"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {openapitoken}"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            # Parse the JSON response and extract model IDs
+            response_data = response.json()
+            model_list = [model["id"] for model in response_data["data"]]
+            st.session_state.model_list = model_list
+        elif response.status_code == 401:
+            raise Exception(f"Response status {response.status_code} Unauthorized, Check your API token")
+        else:
+            raise Exception(f"Response status {response.status_code}")
+    except Exception as e:
+        error_popup(e)
+
+# Always show the model select box if the model list is available
+if 'model_list' in st.session_state:
+    model_list = st.session_state.model_list
+    selected_model = st.sidebar.selectbox("Choose model", model_list)
+    st.session_state.selected_model = selected_model
+
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.0, 0.05)
 
 st.sidebar.header("Explainability Options")
@@ -88,12 +125,16 @@ data_dictionary_toggle = st.sidebar.checkbox("Generate and use Data Dictionary",
 st.sidebar.header("Debug Options")
 show_prompt_toggle = st.sidebar.checkbox("Show SQL Generation Prompt", value=False)
 
-llm = ChatOpenAI(
-    base_url=base_url,
-    api_key=api_key,
-    model=model,
-    temperature=temperature,
-)
+# Ensure a model has been selected before initializing ChatOpenAI
+if 'selected_model' not in st.session_state:
+    st.error("Please load and select a model.")
+else:
+    llm = ChatOpenAI(
+        base_url=openapiurl,
+        api_key=openapitoken,
+        model=st.session_state.selected_model,
+        temperature=temperature,
+    )
 
 uploaded_file = st.file_uploader("Upload a file", type=["csv", "xlsx", "json"])
 if uploaded_file is not None:
