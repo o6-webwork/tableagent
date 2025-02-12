@@ -7,6 +7,7 @@ import time
 import io  # For Excel download conversion
 import random  # For random sampling
 import numpy as np  # For handling numpy.bool_
+import re
 from sqlalchemy import create_engine, text
 
 # Import LLM and prompt classes
@@ -23,6 +24,13 @@ try:
 except ImportError:
     st.error("Please install st-aggrid (pip install streamlit-aggrid) to view results in an interactive table.")
     st.stop()
+
+######################################
+# Helper: Sanitise names (filenames, columns)
+######################################
+def sanitize_name(name: str) -> str:
+    # Replace any non-word character with underscore
+    return re.sub(r'\W+', '_', name)
 
 ######################################
 # SESSION SETUP: Unique DB per User Session
@@ -107,11 +115,13 @@ if uploaded_file is not None:
         else:
             st.error("Unsupported file type.")
             st.stop()
-        df.columns = [col.replace(" ", "_") for col in df.columns]
+        # Sanitize column names
+        df.columns = [sanitize_name(col) for col in df.columns]
         if df.columns.duplicated().any():
             st.error("Duplicate column names detected after processing. Please check the file.")
             st.stop()
-        table_name = os.path.splitext(uploaded_file.name)[0].replace(" ", "_")
+        # Sanitize table name
+        table_name = sanitize_name(os.path.splitext(uploaded_file.name)[0])
         st.session_state["table_name"] = table_name
         st.session_state["df"] = df
     except Exception as e:
@@ -369,13 +379,64 @@ def generate_query_explanation(query: str, question: str) -> str:
 
 def execute_sql_query(state: dict) -> dict:
     query = state["query"]
-    if not query.strip().lower().startswith("select"):
-        return {"result": "Error: Only SELECT queries are permitted.", "row_count": 0}
-    with ro_engine.connect() as conn:
-        result = conn.execute(text(query))
-        rows = [dict(row._mapping) for row in result]
-        row_count = len(rows)
-    return {"result": json.dumps(rows, indent=2), "row_count": row_count}
+    try:
+        with ro_engine.connect() as conn:
+            result = conn.execute(text(query))
+            rows = [dict(row._mapping) for row in result]
+            row_count = len(rows)
+        return {"result": json.dumps(rows, indent=2), "row_count": row_count}
+    except Exception as e:
+        error_message = str(e)
+        st.error(f"Error executing query: {error_message}")
+        # Attempt error correction by feeding error back to LLM to regenerate the query.
+        corrected_query = regenerate_sql_query(state["question"], error_message)
+        if corrected_query:
+            st.info("Regenerated corrected query:")
+            st.code(corrected_query, language="sql")
+            state["query"] = corrected_query
+            try:
+                with ro_engine.connect() as conn:
+                    result = conn.execute(text(corrected_query))
+                    rows = [dict(row._mapping) for row in result]
+                    row_count = len(rows)
+                return {"result": json.dumps(rows, indent=2), "row_count": row_count}
+            except Exception as e2:
+                st.error(f"Error executing corrected query: {str(e2)}")
+                return {"result": json.dumps([]), "row_count": 0}
+        else:
+            return {"result": json.dumps([]), "row_count": 0}
+
+def regenerate_sql_query(question: str, error_message: str) -> str:
+    # Rebuild combined schema info for error correction
+    combined_schema_info = generate_combined_schema(
+        table_schema,
+        st.session_state.get("data_dictionary", {}),
+        st.session_state.get("sample_data", []),
+        df,
+        st.session_state.get("table_name", "training")
+    )
+    correction_prompt = f'''
+The following SQL query produced an error:
+Error: {error_message}
+
+Using the combined schema information below, generate a corrected SQL query that references only valid columns. The query must be a SELECT query.
+
+Combined Schema Information:
+{combined_schema_info}
+
+Original Question: {question}
+
+Please provide only the corrected SQL query.
+    '''
+    structured_llm = llm.with_structured_output(QueryOutput)
+    with st.spinner("Regenerating corrected SQL query..."):
+        try:
+            result = structured_llm.invoke(correction_prompt)
+            corrected_query = result["query"]
+            return corrected_query
+        except Exception as ex:
+            st.error(f"Failed to regenerate query: {str(ex)}")
+            return ""
 
 ######################################
 # 7. DOWNLOAD RESULTS FUNCTION
