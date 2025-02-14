@@ -36,7 +36,6 @@ def sanitize_name(name: str) -> str:
 ######################################
 # SESSION SETUP: Unique DB per User Session
 ######################################
-
 TEMP_DB_DIR = "temp_db"
 if not os.path.exists(TEMP_DB_DIR):
     os.makedirs(TEMP_DB_DIR)
@@ -59,9 +58,17 @@ db_file = os.path.join(TEMP_DB_DIR, f"{session_id}.db")
 st.session_state["db_file"] = db_file
 
 ######################################
+# Callback functions for confirmation buttons
+######################################
+def confirm_alter():
+    st.session_state["alter_confirmed"] = True
+
+def confirm_mod():
+    st.session_state["modification_confirmed"] = True
+
+######################################
 # 1. GENERALIZED FILE INPUT & DATA LOAD
 ######################################
-
 st.set_page_config(layout="wide")
 st.title("TableAgent")
 st.markdown(
@@ -115,13 +122,12 @@ if 'model_list' in st.session_state:
 
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.0, 0.05)
 
-#Safe mode toggle in the sidebar (default True)
+# Safe mode toggle in the sidebar (default True)
 st.sidebar.header("Safe Mode Options")
 safe_mode = st.sidebar.checkbox("Enable Safe Mode (read-only)", value=True)
 st.session_state["safe_mode"] = safe_mode
 
 st.sidebar.header("Explainability Options")
-#show_sql_debug = st.sidebar.checkbox("Show SQL Query", value=False)
 query_explainability_toggle = st.sidebar.checkbox("Generate Query Explanation", value=False)
 
 st.sidebar.header("Data Dictionary")
@@ -143,9 +149,14 @@ else:
 
 uploaded_file = st.file_uploader("Upload a file", type=["csv", "xlsx", "json"])
 if uploaded_file is not None:
-    # If this is a new file (different filename), clear cached keys
+    # Only clear the keys if a new file is uploaded
     if "uploaded_file_name" not in st.session_state or st.session_state["uploaded_file_name"] != uploaded_file.name:
-        keys_to_clear = ["df", "table_name", "sample_data", "data_dictionary", "generated_query"]
+        keys_to_clear = [
+            "uploaded_file_name", "df", "table_name", "sample_data", "data_dictionary", 
+            "generated_query", "table_loaded", "pending_mod_query", "pending_alter_query", 
+            "modification_confirmed", "alter_confirmed", "full_engine", "ro_engine", "table_schema",
+            "db_file", "session_id"
+        ]
         for key in keys_to_clear:
             st.session_state.pop(key, None)
         st.session_state["uploaded_file_name"] = uploaded_file.name
@@ -183,15 +194,11 @@ else:
 ######################################
 # 2. SET UP THE DATABASE ENGINES
 ######################################
-
 if "full_engine" not in st.session_state:
     full_engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
     st.session_state["full_engine"] = full_engine
 else:
     full_engine = st.session_state["full_engine"]
-
-table_name = st.session_state.get("table_name", "training")
-df.to_sql(table_name, full_engine, if_exists="replace", index=False)
 
 if "ro_engine" not in st.session_state:
     ro_engine = create_engine(
@@ -202,14 +209,28 @@ if "ro_engine" not in st.session_state:
 else:
     ro_engine = st.session_state["ro_engine"]
 
-# Get table schema from SQL DB using PRAGMA
-with ro_engine.connect() as conn:
+table_name = st.session_state.get("table_name", "training")
+
+if "table_loaded" not in st.session_state:
+    df.to_sql(table_name, full_engine, if_exists="replace", index=False)
+    st.session_state["table_loaded"] = True
+
+# Helper function: choose engine based on safe_mode setting
+def get_engine():
+    """
+    Returns the full engine when safe_mode is unchecked,
+    otherwise returns the read-only engine.
+    """
+    return st.session_state["full_engine"] if not st.session_state.get("safe_mode", True) else st.session_state["ro_engine"]
+
+# Get table schema using the appropriate engine
+with get_engine().connect() as conn:
     result = conn.execute(text(f"PRAGMA table_info({table_name})"))
     table_schema = [dict(row._mapping) for row in result]
 
 db_for_schema = SQLDatabase(engine=full_engine, sample_rows_in_table_info=5)
-schema_info = db_for_schema.get_table_info()  # We still keep this for legacy purposes if needed.
-db = SQLDatabase(engine=ro_engine)
+schema_info = db_for_schema.get_table_info()  # For legacy purposes if needed.
+db = SQLDatabase(engine=get_engine())
 
 ######################################
 # Helper Function: Generate Combined Schema JSON for multiple tables
@@ -228,7 +249,7 @@ def generate_combined_schema(table_schema, data_dictionary, sample_data, df, tab
             sample_values = list(dict.fromkeys(sample_values))
             if len(sample_values) > 3:
                 sample_values = random.sample(sample_values, 3)
-        has_null = bool(df[col_name].isnull().any())
+        has_null = bool(df[col_name].isnull().any()) if col_name in df.columns else False
         columns.append({
             "column_name": col_name,
             "data_type": data_type,
@@ -251,12 +272,12 @@ def generate_combined_schema(table_schema, data_dictionary, sample_data, df, tab
 ######################################
 if data_dictionary_toggle:
     if st.button("Refresh Sample Data", key="refresh_sample"):
-        with ro_engine.connect() as conn:
+        with get_engine().connect() as conn:
             result = conn.execute(text(f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT 5"))
             sample_rows = [dict(row._mapping) for row in result]
         st.session_state["sample_data"] = sample_rows
     if "sample_data" not in st.session_state:
-        with ro_engine.connect() as conn:
+        with get_engine().connect() as conn:
             result = conn.execute(text(f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT 5"))
             sample_rows = [dict(row._mapping) for row in result]
         st.session_state["sample_data"] = sample_rows
@@ -266,12 +287,6 @@ if data_dictionary_toggle:
     gb_sample = GridOptionsBuilder.from_dataframe(sample_df)
     gb_sample.configure_default_column(resizable=True, wrapText=True, autoHeight=True, minWidth=125)
     gridOptions_sample = gb_sample.build()
-    # gridOptions_sample["onGridReady"] = """
-    #     function(params) {
-    #     const allColumnIds = params.columnApi.getAllColumns().map(col => col.colId);
-    #     params.columnApi.autoSizeColumns(allColumnIds);
-    #     }
-    #     """
     AgGrid(
         sample_df,
         gridOptions=gridOptions_sample,
@@ -396,7 +411,6 @@ def generate_sql_query(question: str) -> dict:
         "dialect": db.dialect,
         "combined_schema_info": combined_schema_info,
         "input": question,
-        #"extra_columns": ", ".join(extra_columns) if extra_columns else "None"
     })
     if show_prompt_toggle:
          st.markdown("### Debug: SQL Generation Prompt")
@@ -422,9 +436,7 @@ def generate_query_explanation(query: str, question: str) -> str:
 
 def execute_sql_query(state: dict) -> dict:
     query = state["query"]
-    safe_mode = st.session_state.get("safe_mode", True)
-    # Use the appropriate engine based on safe mode toggle.
-    engine_to_use = ro_engine if safe_mode else full_engine
+    engine_to_use = get_engine()  # Uses full engine if safe_mode is off
     try:
         with engine_to_use.connect() as conn:
             result = conn.execute(text(query))
@@ -433,19 +445,16 @@ def execute_sql_query(state: dict) -> dict:
         return {"result": json.dumps(rows, indent=2), "row_count": row_count}
     except Exception as e:
         error_message = str(e)
-        # Gracefully handle the read-only error if safe mode is enabled.
-        if safe_mode and "attempt to write a readonly database" in error_message:
+        if st.session_state.get("safe_mode", True) and "attempt to write a readonly database" in error_message:
             st.error("This query is prohibited under safe mode to prevent data modification.")
             return {"result": json.dumps([]), "row_count": 0}
         else:
             st.error(f"Error executing query: {error_message}")
-            # Attempt error correction by feeding error back to LLM to regenerate the query.
             corrected_query = regenerate_sql_query(state["question"], error_message, state["query"])
             if corrected_query:
                 st.info("Regenerated corrected query:")
                 st.code(corrected_query, language="sql")
                 state["query"] = corrected_query
-                # Update the generated query in session state so that query explanation uses it.
                 st.session_state["generated_query"] = corrected_query
                 try:
                     with engine_to_use.connect() as conn:
@@ -460,7 +469,6 @@ def execute_sql_query(state: dict) -> dict:
                 return {"result": json.dumps([]), "row_count": 0}
 
 def regenerate_sql_query(question: str, error_message: str, original_query: str) -> str:
-    # Rebuild combined schema info for error correction
     combined_schema_info = generate_combined_schema(
         table_schema,
         st.session_state.get("data_dictionary", {}),
@@ -491,6 +499,123 @@ Please provide only the corrected SQL query.
         except Exception as ex:
             st.error(f"Failed to regenerate query: {str(ex)}")
             return ""
+
+def is_modification_query(query: str) -> bool:
+    """Return True if the query starts with INSERT, UPDATE, or DELETE."""
+    return bool(re.match(r'^\s*(INSERT|UPDATE|DELETE)', query, re.IGNORECASE))
+
+def add_returning_clause(query: str) -> str:
+    """If the query is a modification query and does not include a RETURNING clause, add one."""
+    if is_modification_query(query):
+        if "returning" not in query.lower():
+            query = query.rstrip().rstrip(';')
+            query += " RETURNING *;"
+    return query
+
+def preview_modification_query(query: str) -> list:
+    query_with_returning = add_returning_clause(query)
+    with full_engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            result = conn.execute(text(query_with_returning))
+            preview_rows = [dict(row._mapping) for row in result]
+        except Exception as e:
+            preview_rows = [{"error": str(e)}]
+        trans.rollback()
+    return preview_rows
+
+def execute_modification_query(query: str) -> dict:
+    query_with_returning = add_returning_clause(query)
+    rows = []
+    row_count = None
+    with full_engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            result = conn.execute(text(query_with_returning))
+            try:
+                rows = [dict(row._mapping) for row in result]
+            except Exception:
+                rows = []
+            row_count = result.rowcount
+            trans.commit()
+        except Exception as e:
+            trans.rollback()
+            error_str = str(e)
+            st.warning("Execution with RETURNING clause failed: " + error_str)
+            st.warning("Trying to execute query without RETURNING clause...")
+            query_without_returning = re.sub(r"(?i)\s+RETURNING\s+.*", "", query_with_returning).rstrip(";") + ";"
+            with full_engine.connect() as conn2:
+                trans2 = conn2.begin()
+                try:
+                    result2 = conn2.execute(text(query_without_returning))
+                    row_count = result2.rowcount
+                    trans2.commit()
+                    rows = []
+                except Exception as e2:
+                    trans2.rollback()
+                    st.error(f"Error executing modification query without RETURNING clause: {str(e2)}")
+                    return {"rows": [], "row_count": 0}
+    st.session_state["ro_engine"].dispose()
+    st.session_state["ro_engine"] = create_engine(
+        f"sqlite:///file:{db_file}?mode=ro&uri=true",
+        connect_args={"check_same_thread": False}
+    )
+    return {"rows": rows, "row_count": row_count}
+
+def execute_alter_table_query(query: str):
+    with full_engine.connect() as conn:
+        conn.execute(text(query))
+        conn.commit()
+
+    # Refresh the table schema using the appropriate engine
+    with get_engine().connect() as conn:
+        result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+        new_schema = [dict(row._mapping) for row in result]
+    st.session_state["table_schema"] = new_schema
+
+    # Refresh sample data
+    with get_engine().connect() as conn:
+        result = conn.execute(text(f"SELECT * FROM {table_name} ORDER BY RANDOM() LIMIT 5"))
+        new_sample = [dict(row._mapping) for row in result]
+    st.session_state["sample_data"] = new_sample
+
+    # Refresh the DataFrame (so subsequent queries use the updated structure)
+    try:
+        new_df = pd.read_sql_query(f"SELECT * FROM {table_name}", full_engine)
+        st.session_state["df"] = new_df
+    except Exception as e:
+        st.warning(f"Could not refresh DataFrame after ALTER TABLE: {e}")
+
+    # Regenerate the Data Dictionary after ALTER TABLE if enabled.
+    if data_dictionary_toggle:
+        with st.spinner("Regenerating data dictionary after ALTER TABLE..."):
+            data_dict_prompt = '''
+You are an expert data analyst. Given the following schema information and sample data, generate a short description for what each column represents.
+
+Schema info:
+{schema_info}
+
+Sample data (first few rows):
+{sample_data}
+
+Output the result as JSON with a single field "explanations", which is an object where keys are column names and values are the descriptions.
+            '''
+            data_dict_prompt_template = ChatPromptTemplate.from_template(data_dict_prompt)
+
+            class DataDictionaryOutput(TypedDict):
+                explanations: Annotated[dict, ..., "Mapping of column names to their descriptions."]
+
+            def generate_data_dictionary() -> dict:
+                sample_data = json.dumps(st.session_state["sample_data"], indent=2)
+                prompt = data_dict_prompt_template.invoke({
+                    "schema_info": json.dumps(st.session_state["table_schema"], indent=2),
+                    "sample_data": sample_data
+                })
+                structured_llm = llm.with_structured_output(DataDictionaryOutput)
+                result = structured_llm.invoke(prompt)
+                return result["explanations"]
+
+            st.session_state["data_dictionary"] = generate_data_dictionary()
 
 ######################################
 # 6. DOWNLOAD RESULTS FUNCTION
@@ -526,36 +651,113 @@ def download_results(df_result: pd.DataFrame):
 ######################################
 # 7. STREAMLIT USER INTERFACE FOR QA
 ######################################
+if "pending_mod_query" not in st.session_state:
+    st.session_state["pending_mod_query"] = None
+if "modification_confirmed" not in st.session_state:
+    st.session_state["modification_confirmed"] = False
+
+if "pending_alter_query" not in st.session_state:
+    st.session_state["pending_alter_query"] = None
+if "alter_confirmed" not in st.session_state:
+    st.session_state["alter_confirmed"] = False
+
 st.markdown("### Ask a question about your data:")
 user_question = st.text_input("Your question:")
 
 if st.button("Submit") and user_question:
     st.write("Processing your question...")
-    
-    # 1. Generate SQL Query and display it.
     sql_state = {"question": user_question}
     sql_state.update(generate_sql_query(user_question))
-    
-    # 2. Execute SQL Query and display Results immediately.
+    query_generated = sql_state["query"]
+    st.session_state["generated_query"] = query_generated
+
+    # Check for ALTER TABLE queries.
+    if re.match(r'^\s*ALTER\s+TABLE', query_generated, re.IGNORECASE):
+        if st.session_state.get("safe_mode", True):
+            st.error("ALTER TABLE queries are disabled in safe mode.")
+            st.session_state["generated_query"] = None
+        else:
+            st.session_state["pending_alter_query"] = query_generated
+            st.session_state["alter_confirmed"] = False
+
+    # For modification queries when safe mode is off.
+    elif is_modification_query(query_generated) and not st.session_state.get("safe_mode", True):
+        st.session_state["pending_mod_query"] = query_generated
+        st.session_state["modification_confirmed"] = False
+
+if st.session_state.get("pending_alter_query"):
+    query_generated = st.session_state["pending_alter_query"]
+    if not st.session_state.get("safe_mode", True):
+        st.warning("This query will alter your table schema.")
+        pattern = r'^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(.*)$'
+        m = re.match(pattern, query_generated, re.IGNORECASE)
+        if m:
+            table_name_from_query = m.group(1)
+            new_column = m.group(2)
+            col_def = m.group(3)
+            st.markdown("**Preview of New Column Schema:**")
+            st.markdown(f"- **Table:** {table_name_from_query}")
+            st.markdown(f"- **New Column:** {new_column}")
+            st.markdown(f"- **Definition:** {col_def}")
+        else:
+            st.markdown("Could not parse the ALTER TABLE query for preview.")
+        if not st.session_state.get("alter_confirmed"):
+            st.button("Confirm Execution of ALTER TABLE Query", key="confirm_alter_query", on_click=confirm_alter)
+        if st.session_state.get("alter_confirmed"):
+            execute_alter_table_query(query_generated)
+            st.success("ALTER TABLE query executed and schema updated.")
+            st.markdown("### Updated Table Schema")
+            new_schema = st.session_state.get("table_schema", [])
+            st.code(json.dumps(new_schema, indent=2), language="json")
+            st.session_state["pending_alter_query"] = None
+            st.session_state["alter_confirmed"] = False
+
+if st.session_state.get("pending_mod_query"):
+    query_generated = st.session_state["pending_mod_query"]
+    if not st.session_state.get("safe_mode", True):
+        st.warning("This query will modify your database.")
+        st.markdown("#### Preview of Modified Rows")
+        preview_rows = preview_modification_query(query_generated)
+        if preview_rows and "error" not in preview_rows[0]:
+            preview_rows = pd.DataFrame(preview_rows)
+            gb = GridOptionsBuilder.from_dataframe(preview_rows)
+            gb.configure_default_column(resizable=True, wrapText=True, autoHeight=True, minWidth=125)
+            gridOptions = gb.build()
+            AgGrid(
+                preview_rows, 
+                gridOptions=gridOptions, 
+                height=300, 
+                fit_columns_on_grid_load=True, 
+                key="aggrid_results"
+            )
+        else:
+            st.write("Could not retrieve preview:", preview_rows)
+        if not st.session_state.get("modification_confirmed"):
+            st.button("Confirm Execution of Modification Query", key="confirm_mod_query", on_click=confirm_mod)
+        if st.session_state.get("modification_confirmed"):
+            mod_result = execute_modification_query(query_generated)
+            st.subheader("Modification Query Executed")
+            st.success(f"{mod_result['row_count']} rows modified.")
+            st.session_state["pending_mod_query"] = None
+            st.session_state["modification_confirmed"] = False
+
+if st.session_state.get("generated_query") and (
+    (not is_modification_query(st.session_state["generated_query"]) and not re.match(r'^\s*ALTER\s+TABLE', st.session_state["generated_query"], re.IGNORECASE))
+    or st.session_state.get("safe_mode", True)
+):
+    sql_state = {"query": st.session_state["generated_query"], "question": user_question}
     sql_state.update(execute_sql_query(sql_state))
     try:
-        #df_result = pd.read_json(sql_state["result"])
         df_result = pd.read_json(io.StringIO(sql_state["result"]))
     except Exception as e:
         st.error(f"Error parsing SQL results: {e}")
         df_result = pd.DataFrame()
-    
+
     st.subheader("Results")
     if not df_result.empty:
         gb = GridOptionsBuilder.from_dataframe(df_result)
         gb.configure_default_column(resizable=True, wrapText=True, autoHeight=True, minWidth=125)
         gridOptions = gb.build()
-        # gridOptions["onGridReady"] = """
-        # function(params) {
-        # const allColumnIds = params.columnApi.getAllColumns().map(col => col.colId);
-        # params.columnApi.autoSizeColumns(allColumnIds);
-        # }
-        # """
         AgGrid(
             df_result, 
             gridOptions=gridOptions, 
@@ -566,12 +768,10 @@ if st.button("Submit") and user_question:
         )
     else:
         st.text("No results returned.")
-    
-    # 3. Generate Query Explanation (using the final query, regenerated if applicable) and display in an expander.
+
     if query_explainability_toggle:
         with st.expander("Query Explanation", expanded=True):
             explanation = generate_query_explanation(st.session_state["generated_query"], user_question)
             st.markdown(explanation)
-    
-    # 4. Display Download Results options.
+
     download_results(df_result)
