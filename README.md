@@ -53,8 +53,8 @@ Additional dependencies might be required by your local LLM server.
 
 ### 1. Clone the Repository
 ```sh
-git clone https://github.com/yourusername/your-repo.git
-cd your-repo
+git clone https://github.com/o6-webwork/tableagent.git
+cd tableagent
 ```
 
 ### 2. Run with Docker (Recommended)
