@@ -4,7 +4,6 @@ FROM python:3.12.9
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    LLM_BASE_URL="http://host.docker.internal:1234/v1"  \
     WORKDIR=/app
 
 # Set the working directory

@@ -5,3 +5,7 @@ services:
     ports:
       - "8501:8501"
     container_name: tableagent
+    environment:
+      - LLM_BASE_URL=http://127.0.0.1:8000/v1
+      - OPENAI_API_KEY=token-abc123
+    restart: unless-stopped

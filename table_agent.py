@@ -88,10 +88,11 @@ def error_popup(e):
         st.rerun()
 
 st.sidebar.header("LLM Configuration")
-openapiurl = st.sidebar.text_input("Base URL", "http://127.0.0.1:1234/v1")
-openapitoken = st.sidebar.text_input("API Key", os.environ.get("OPENAI_API_KEY", "token-abc123"))
+llm_base_url = os.getenv("LLM_BASE_URL")
+openapiurl = st.sidebar.text_input("Base URL", llm_base_url)
+openapitoken = st.sidebar.text_input("API Key", os.environ.get("OPENAI_API_KEY"))
 st.session_state.openapitoken = openapitoken
-st.session_state.openaiapiurl = openapiurl 
+st.session_state.openaiapiurl = openapiurl
 
 load_models = st.sidebar.button("Load models" if 'model_list' not in st.session_state else "Refresh models")
 if load_models:
